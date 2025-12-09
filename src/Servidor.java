@@ -5,26 +5,36 @@ import java.util.ArrayList;
 import java.util.HashMap;
 
 public class Servidor {
-    public static final int PUERTO = 5000;
+    private static final int PUERTO = 5000;
+    private static final int MAX_CLIENTES = 5;
+    private static int clientesActivos = 0;
+    private static final Object lock = new Object();
+    //Global para todos los hilos
+    public static final HashMap<String, ArrayList<Registro>> registros = obtenerRegistrosDeFichero();
+
     public static void main(String[] args) {
         try(ServerSocket serverSocket = new ServerSocket(PUERTO)) {
-            HashMap<String, ArrayList<Registro>> registros = obtenerRegistrosDeFichero();
-
             while(true) {
                 Socket cliente = serverSocket.accept();
-                System.out.println("Cliente conectado desde " + cliente.getInetAddress().getHostAddress());
 
-                BufferedReader entrada = new BufferedReader(new InputStreamReader(cliente.getInputStream()));
-                PrintWriter salida = new PrintWriter(cliente.getOutputStream(), true);
+                //El lock es para que no puedan entrar 2 clientes a la vez, y que si ya había 4, acaben habiendo 6 en total
+                synchronized(lock) {
+                    //Para que no acepte más de los clientes que se especifiquen
+                    if (clientesActivos >= MAX_CLIENTES) {
+                        PrintWriter salida = new PrintWriter(cliente.getOutputStream(), true);
+                        salida.println("Maximun capacity of clients reached.");
+                        cliente.close();
+                        continue;
+                    } else {
+                        clientesActivos++;
+                    }
+                }
 
-                atenderClienteActual(entrada, salida, registros);
-
-                cliente.close();
-                entrada.close();
-                salida.close();
+                HiloCliente hiloCliente = new HiloCliente(cliente);
+                hiloCliente.start();
             }
         } catch (IOException e) {
-            System.out.println("Error de entrada y salida: " + e.getMessage() );
+            System.out.println("Error de entrada y salida: " + e.getMessage());
         }
     }
 
@@ -35,10 +45,9 @@ public class Servidor {
         try (BufferedReader bufferedReader = new BufferedReader(new FileReader(fichero))) {
             String linea;
             while ((linea = bufferedReader.readLine()) != null) {
-                //La expresión regular es por si hay más de un espacio entre las palabras
                 String[] partesLinea = linea.split("\\s+");
 
-                if(partesLinea.length == 3) { //Por si hay líneas vacías o los registros no cumplen con el formato requerido
+                if(partesLinea.length == 3) {
                     String nombreDominio = partesLinea[0];
                     String tipoRegistro = partesLinea[1];
                     String valor = partesLinea[2];
@@ -58,124 +67,8 @@ public class Servidor {
         return registrosMap;
     }
 
-    public static void atenderClienteActual(BufferedReader entrada, PrintWriter salida, HashMap<String, ArrayList<Registro>> registros) throws IOException {
-        try {
-            boolean clienteActivo = true;
-            while(clienteActivo) {
-                String solicitudCliente = entrada.readLine();
-                solicitudCliente = limpiarCadenaTelnet(solicitudCliente);
-                System.out.println("El cliente solicita: " + solicitudCliente);
-                String[] partesMensaje = solicitudCliente.split(" ");
-                if(solicitudCliente.equals("EXIT")) {
-                    System.out.println("Conexión con cliente cerrada.");
-                    clienteActivo = false;
-                } else if(partesMensaje[0].equals("REGISTER") && partesMensaje.length == 4 &&
-                        (partesMensaje[2].equals("A") || partesMensaje[2].equals("MX") || partesMensaje[2].equals("CNAME"))) {
-                    String nombreDominio = partesMensaje[1];
-                    String tipoRegistro = partesMensaje[2];
-                    String valor = partesMensaje[3];
-                    Registro registro = new Registro(nombreDominio, tipoRegistro, valor);
-
-                    if (!registros.containsKey(nombreDominio)) {
-                        registros.put(nombreDominio, new ArrayList<>());
-                    }
-                    registros.get(nombreDominio).add(registro);
-
-                    try {
-                        File file = new File("src/ficheroDatos.txt");
-                        PrintWriter salidaNuevoRegistro = new PrintWriter(new FileWriter(file, true));
-                        salidaNuevoRegistro.printf("\n%s   %s   %s", nombreDominio, tipoRegistro, valor);
-                        System.out.println("Nuevo registro añadido correctamente.");
-                        salida.println("200 Record added");
-                        salidaNuevoRegistro.close();
-                    } catch (IOException e) {
-                        System.out.println("Error al escribir en el fichero: " + e.getMessage());
-                        salida.println("Error writing new register");
-                    }
-                } else if(solicitudCliente.equals("LIST")) {
-                    System.out.println("Listando registros.");
-                    salida.println("150 Inicio listado");
-                    for (String dominio : registros.keySet()) {
-                        ArrayList<Registro> registrosDominio = registros.get(dominio);
-                        for (Registro registro : registrosDominio) {
-                            salida.println(registro.getNombreDominio() + " " + registro.getTipoRegistro() + " " + registro.getValor());
-                        }
-                    }
-                    salida.println("226 Fin listado");
-                } else if(partesMensaje[0].equals("LOOKUP") && partesMensaje.length == 3) {
-                    String tipoRegistroSolicitado = partesMensaje[1];
-                    String valorSolicitado = partesMensaje[2];
-                    if (registros.containsKey(valorSolicitado)) {
-                        ArrayList<Registro> registrosDominio = registros.get(valorSolicitado);
-                        ArrayList<String> valoresEncontrados = new ArrayList<>();
-
-                        //Por si hay más de un registro (MX) con el mismo nombre de dominio
-                        for (Registro registro : registrosDominio) {
-                            //Aparte del nombre de dominio, que sea el mismo tipo de registro
-                            if (registro.getTipoRegistro().equals(tipoRegistroSolicitado)) {
-                                valoresEncontrados.add(registro.getValor());
-                            }
-                        }
-
-                        if (!valoresEncontrados.isEmpty()) {
-                            System.out.println("Resultado encontrado.");
-                            for (String valorEncontrado : valoresEncontrados) {
-                                salida.println("200 " + valorEncontrado);
-                            }
-                        } else {
-                            System.out.println("No se encontró ningún resultado.");
-                            salida.println("404 Not Found");
-                        }
-                    } else {
-                        System.out.println("No se encontró ningún resultado.");
-                        salida.println("404 Not Found");
-                    }
-                } else {
-                    System.out.println("Formato de solicitud incorrecto.");
-                    salida.println("400 Bad Request");
-                }
-            }
-        } catch (Exception e) {
-            System.out.println("Error inesperado.");
-            salida.println("500 Server Error");
-        }
-    }
-
-    //Esto sirve porque telnet para cambiar un caracter, no lo elimina, así que la limpieza del String se hace aquí
-    public static String limpiarCadenaTelnet(String solicitudCliente) {
-        StringBuilder resultado = new StringBuilder();
-        boolean enSecuenciaEscape = false;
-
-        for (int i = 0; i < solicitudCliente.length(); i++) {
-            char c = solicitudCliente.charAt(i);
-
-            if (c == '\u001B') {
-                enSecuenciaEscape = true;
-                continue;
-            }
-
-            if (enSecuenciaEscape) {
-                if (c == '[') {
-                    continue;
-                }
-                if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')) {
-                    enSecuenciaEscape = false;
-                }
-                continue;
-            }
-
-            if (c == '\b' || c == 127) {
-                if (!resultado.isEmpty()) {
-                    resultado.deleteCharAt(resultado.length() - 1);
-                }
-                continue;
-            }
-
-            if (c >= 32 && c <= 126) {
-                resultado.append(c);
-            }
-        }
-
-        return resultado.toString();
+    //Es mejor que la varible quede como private y modificarla a través de un metodo
+    public static void restarCliente() {
+        clientesActivos--;
     }
 }

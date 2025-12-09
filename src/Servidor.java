@@ -92,7 +92,7 @@ public class Servidor {
 
                         //Por si hay más de un registro (MX) con el mismo nombre de dominio
                         for (Registro registro : registrosDominio) {
-                            //Aparte del nombre de dominio, que tenga la misma letra
+                            //Aparte del nombre de dominio, que sea el mismo tipo de registro
                             if (registro.getTipoRegistro().equals(tipoRegistroSolicitado)) {
                                 valoresEncontrados.add(registro.getValor());
                             }

@@ -10,7 +10,6 @@ public class Servidor {
         try(ServerSocket serverSocket = new ServerSocket(PUERTO)) {
             HashMap<String, ArrayList<Registro>> registros = obtenerRegistrosDeFichero();
 
-            //Atiende a más de un cliente por ejecución
             while(true) {
                 Socket cliente = serverSocket.accept();
                 System.out.println("Cliente conectado desde " + cliente.getInetAddress().getHostAddress());
@@ -39,15 +38,17 @@ public class Servidor {
                 //La expresión regular es por si hay más de un espacio entre las palabras
                 String[] partesLinea = linea.split("\\s+");
 
-                String nombreDominio = partesLinea[0];
-                String tipoRegistro = partesLinea[1];
-                String valor = partesLinea[2];
+                if(partesLinea.length == 3) { //Por si hay líneas vacías o los registros no cumplen con el formato requerido
+                    String nombreDominio = partesLinea[0];
+                    String tipoRegistro = partesLinea[1];
+                    String valor = partesLinea[2];
 
-                Registro registro = new Registro(nombreDominio, tipoRegistro, valor);
-                if (!registrosMap.containsKey(nombreDominio)) {
-                    registrosMap.put(nombreDominio, new ArrayList<>());
+                    Registro registro = new Registro(nombreDominio, tipoRegistro, valor);
+                    if (!registrosMap.containsKey(nombreDominio)) {
+                        registrosMap.put(nombreDominio, new ArrayList<>());
+                    }
+                    registrosMap.get(nombreDominio).add(registro);
                 }
-                registrosMap.get(nombreDominio).add(registro);
             }
         } catch (FileNotFoundException e) {
             System.out.println("Fichero no encontrado: " + e.getMessage());
@@ -68,6 +69,17 @@ public class Servidor {
                 if(solicitudCliente.equals("EXIT")) {
                     System.out.println("Conexión con cliente cerrada.");
                     clienteActivo = false;
+
+                } else if(partesMensaje[0].equals("LIST")) {
+                    System.out.println("Listando registros.");
+                    salida.println("150 Inicio listado");
+                    for (String dominio : registros.keySet()) {
+                        ArrayList<Registro> registrosDominio = registros.get(dominio);
+                        for (Registro registro : registrosDominio) {
+                            salida.println(registro.getNombreDominio() + " " + registro.getTipoRegistro() + " " + registro.getValor());
+                        }
+                    }
+                    salida.println("226 Fin listado");
                 } else if(!partesMensaje[0].equals("LOOKUP") || partesMensaje.length != 3) {
                     System.out.println("Formato de solicitud incorrecto.");
                     salida.println("400 Bad Request");

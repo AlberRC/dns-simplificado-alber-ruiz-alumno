@@ -69,8 +69,30 @@ public class Servidor {
                 if(solicitudCliente.equals("EXIT")) {
                     System.out.println("Conexión con cliente cerrada.");
                     clienteActivo = false;
+                } else if(partesMensaje[0].equals("REGISTER") && partesMensaje.length == 4 &&
+                        (partesMensaje[2].equals("A") || partesMensaje[2].equals("MX") || partesMensaje[2].equals("CNAME"))) {
+                    String nombreDominio = partesMensaje[1];
+                    String tipoRegistro = partesMensaje[2];
+                    String valor = partesMensaje[3];
+                    Registro registro = new Registro(nombreDominio, tipoRegistro, valor);
 
-                } else if(partesMensaje[0].equals("LIST")) {
+                    if (!registros.containsKey(nombreDominio)) {
+                        registros.put(nombreDominio, new ArrayList<>());
+                    }
+                    registros.get(nombreDominio).add(registro);
+
+                    try {
+                        File file = new File("src/ficheroDatos.txt");
+                        PrintWriter salidaNuevoRegistro = new PrintWriter(new FileWriter(file, true));
+                        salidaNuevoRegistro.printf("\n%s   %s   %s", nombreDominio, tipoRegistro, valor);
+                        System.out.println("Nuevo registro añadido correctamente.");
+                        salida.println("200 Record added");
+                        salidaNuevoRegistro.close();
+                    } catch (IOException e) {
+                        System.out.println("Error al escribir en el fichero: " + e.getMessage());
+                        salida.println("Error writing new register");
+                    }
+                } else if(solicitudCliente.equals("LIST")) {
                     System.out.println("Listando registros.");
                     salida.println("150 Inicio listado");
                     for (String dominio : registros.keySet()) {
@@ -80,10 +102,7 @@ public class Servidor {
                         }
                     }
                     salida.println("226 Fin listado");
-                } else if(!partesMensaje[0].equals("LOOKUP") || partesMensaje.length != 3) {
-                    System.out.println("Formato de solicitud incorrecto.");
-                    salida.println("400 Bad Request");
-                } else {
+                } else if(partesMensaje[0].equals("LOOKUP") && partesMensaje.length == 3) {
                     String tipoRegistroSolicitado = partesMensaje[1];
                     String valorSolicitado = partesMensaje[2];
                     if (registros.containsKey(valorSolicitado)) {
@@ -111,6 +130,9 @@ public class Servidor {
                         System.out.println("No se encontró ningún resultado.");
                         salida.println("404 Not Found");
                     }
+                } else {
+                    System.out.println("Formato de solicitud incorrecto.");
+                    salida.println("400 Bad Request");
                 }
             }
         } catch (Exception e) {
